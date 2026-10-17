@@ -36,6 +36,13 @@ pub struct Settings {
     pub show_apps_tab: bool,
     #[serde(default = "default_app_top_n")]
     pub app_top_n: u32,
+    /// 登录 Windows 时自动启动本程序
+    #[serde(default = "default_auto_start")]
+    pub auto_start: bool,
+}
+
+fn default_auto_start() -> bool {
+    true
 }
 
 fn default_show_apps() -> bool {
@@ -59,6 +66,7 @@ impl Default for Settings {
             clamp_to_screen: true,
             show_apps_tab: true,
             app_top_n: 15,
+            auto_start: true,
         }
     }
 }

@@ -1,6 +1,7 @@
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod app;
+mod auto_start;
 mod fonts;
 mod mem_trim;
 mod monitor;
@@ -9,6 +10,9 @@ mod theme;
 
 fn main() -> eframe::Result<()> {
     let settings = settings::Settings::load();
+    if let Err(e) = auto_start::apply(settings.auto_start) {
+        eprintln!("开机自启: {}", e);
+    }
     let size = settings.window_size(2, false);
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([size[0], size[1]])

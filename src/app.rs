@@ -1,3 +1,4 @@
+use crate::auto_start;
 use crate::mem_trim;
 use crate::monitor::{format_bytes_per_sec, lerp_disks, AppUsage, HardwareMonitor, Metrics};
 use crate::settings::Settings;
@@ -181,6 +182,10 @@ impl eframe::App for LiteMonitorApp {
         self.sync_window_size(ctx);
         if self.settings_dirty {
             self.settings.save();
+            if let Err(e) = auto_start::apply(self.settings.auto_start) {
+                self.toast = e;
+                self.toast_until = Some(Instant::now() + Duration::from_secs(6));
+            }
             self.last_window_size = self.window_size_now();
             self.settings_dirty = false;
         }
@@ -455,6 +460,16 @@ fn settings_window(ctx: &egui::Context, app: &mut LiteMonitorApp) {
             }
             if ui.checkbox(&mut app.settings.always_on_top, "窗口置顶").changed() {
                 app.settings_dirty = true;
+            }
+            if ui
+                .checkbox(&mut app.settings.auto_start, "开机自启（登录 Windows 时启动本程序）")
+                .changed()
+            {
+                app.settings_dirty = true;
+                if let Err(e) = auto_start::apply(app.settings.auto_start) {
+                    app.toast = e;
+                    app.toast_until = Some(Instant::now() + Duration::from_secs(6));
+                }
             }
             ui.separator();
             ui.label("内存行上的「释放」会清理系统待机列表；若无效请以管理员身份运行。");
