@@ -7,7 +7,7 @@ fn default_vertical_layout() -> bool {
 }
 
 fn default_ui_scale() -> f32 {
-    1.2
+    1.35
 }
 
 #[derive(Clone, Serialize, Deserialize)]
@@ -35,9 +35,9 @@ impl Default for Settings {
             refresh_ms: 1000,
             always_on_top: true,
             opacity: 0.95,
-            panel_width: 300.0,
+            panel_width: 340.0,
             vertical_layout: true,
-            ui_scale: 1.2,
+            ui_scale: 1.35,
             show_cpu: true,
             show_mem: true,
             show_gpu: true,
@@ -49,7 +49,7 @@ impl Default for Settings {
 }
 
 impl Settings {
-    pub fn visible_metric_count(&self) -> u32 {
+    pub fn visible_row_count(&self, disk_count: usize) -> u32 {
         let mut n = 0u32;
         if self.show_cpu {
             n += 1;
@@ -61,27 +61,26 @@ impl Settings {
             n += 1;
         }
         if self.show_disk {
-            n += 1;
+            n += disk_count.max(1) as u32;
         }
         if self.show_net {
             n += 1;
         }
-        n
+        n.max(1)
     }
 
-    pub fn panel_height(&self) -> f32 {
+    pub fn panel_height(&self, disk_count: usize) -> f32 {
         if self.vertical_layout {
-            let rows = self.visible_metric_count().max(1);
-            // 顶栏 + 每行高度 + 内边距
-            52.0 + rows as f32 * 62.0 + 16.0
+            let rows = self.visible_row_count(disk_count);
+            56.0 + rows as f32 * 66.0 + 20.0
         } else {
             72.0
         }
     }
 
-    pub fn window_size(&self) -> [f32; 2] {
+    pub fn window_size(&self, disk_count: usize) -> [f32; 2] {
         if self.vertical_layout {
-            [self.panel_width.max(260.0), self.panel_height()]
+            [self.panel_width.max(280.0), self.panel_height(disk_count)]
         } else {
             [self.panel_width.max(520.0), 72.0]
         }

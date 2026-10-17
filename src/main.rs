@@ -2,12 +2,13 @@
 
 mod app;
 mod fonts;
+mod mem_trim;
 mod monitor;
 mod settings;
 
 fn main() -> eframe::Result<()> {
     let settings = settings::Settings::load();
-    let size = settings.window_size();
+    let size = settings.window_size(2);
     let mut viewport = egui::ViewportBuilder::default()
         .with_inner_size([size[0], size[1]])
         .with_min_inner_size([260.0, 120.0])

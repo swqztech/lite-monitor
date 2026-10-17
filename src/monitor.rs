@@ -1,6 +1,15 @@
 use nvml_wrapper::Nvml;
 use std::time::{Duration, Instant};
-use sysinfo::{Disks, Networks, System};
+use sysinfo::{Disk, Disks, Networks, System};
+
+#[derive(Clone, Debug)]
+pub struct DiskInfo {
+    /// 如「磁盘 C:」
+    pub label: String,
+    pub used_percent: f32,
+    pub free_gb: f32,
+    pub total_gb: f32,
+}
 
 /// 展示用指标（已平滑）
 #[derive(Clone, Default)]
@@ -13,7 +22,7 @@ pub struct Metrics {
     pub gpu_mem_used_mb: Option<u64>,
     pub gpu_mem_total_mb: Option<u64>,
     pub gpu_temp_c: Option<u32>,
-    pub disk_used_percent: f32,
+    pub disks: Vec<DiskInfo>,
     pub net_down_bps: f64,
     pub net_up_bps: f64,
 }
@@ -72,7 +81,7 @@ impl HardwareMonitor {
         };
 
         let (net_down_bps, net_up_bps) = self.network_rates();
-        let disk_used_percent = self.disk_used_percent();
+        let disks = self.list_disks();
         let (gpu_percent, gpu_mem_used_mb, gpu_mem_total_mb, gpu_temp_c) = self.gpu_stats();
 
         Metrics {
@@ -84,7 +93,7 @@ impl HardwareMonitor {
             gpu_mem_used_mb,
             gpu_mem_total_mb,
             gpu_temp_c,
-            disk_used_percent,
+            disks,
             net_down_bps,
             net_up_bps,
         }
@@ -103,18 +112,30 @@ impl HardwareMonitor {
         (down, up)
     }
 
-    fn disk_used_percent(&self) -> f32 {
-        let mut total: u64 = 0;
-        let mut avail: u64 = 0;
+    fn list_disks(&self) -> Vec<DiskInfo> {
+        let mut out = Vec::new();
         for disk in self.disks.iter() {
-            total += disk.total_space();
-            avail += disk.available_space();
+            if !should_show_disk(disk) {
+                continue;
+            }
+            let total = disk.total_space();
+            let avail = disk.available_space();
+            let used = total.saturating_sub(avail);
+            let used_percent = if total > 0 {
+                (used as f32 / total as f32) * 100.0
+            } else {
+                0.0
+            };
+            let gb = 1024.0 * 1024.0 * 1024.0;
+            out.push(DiskInfo {
+                label: disk_label(disk),
+                used_percent,
+                free_gb: avail as f32 / gb,
+                total_gb: total as f32 / gb,
+            });
         }
-        if total == 0 {
-            return 0.0;
-        }
-        let used = total.saturating_sub(avail);
-        (used as f32 / total as f32) * 100.0
+        out.sort_by(|a, b| a.label.cmp(&b.label));
+        out
     }
 
     fn gpu_stats(&self) -> (Option<f32>, Option<u64>, Option<u64>, Option<u32>) {
@@ -139,6 +160,32 @@ impl HardwareMonitor {
             Some(mem.total / (1024 * 1024)),
             temp,
         )
+    }
+}
+
+fn should_show_disk(disk: &Disk) -> bool {
+    let total = disk.total_space();
+    if total == 0 {
+        return false;
+    }
+    let mp = disk.mount_point().to_string_lossy();
+    if mp.is_empty() {
+        return false;
+    }
+    // 跳过 UNC 网络盘
+    if mp.starts_with("\\\\") {
+        return false;
+    }
+    true
+}
+
+fn disk_label(disk: &Disk) -> String {
+    let mp = disk.mount_point().to_string_lossy();
+    let letter = mp.trim_end_matches('\\');
+    if letter.len() <= 3 && letter.ends_with(':') {
+        format!("磁盘 {}", letter)
+    } else {
+        format!("磁盘 {}", letter)
     }
 }
 
@@ -167,3 +214,19 @@ pub fn format_bytes_per_sec(bps: f64) -> String {
     }
 }
 
+pub fn lerp_disks(display: &mut Vec<DiskInfo>, target: &[DiskInfo], t: f32) {
+    for m in target {
+        if let Some(d) = display.iter_mut().find(|d| d.label == m.label) {
+            d.used_percent = lerp(d.used_percent, m.used_percent, t);
+            d.free_gb = m.free_gb;
+            d.total_gb = m.total_gb;
+        } else {
+            display.push(m.clone());
+        }
+    }
+    display.retain(|d| target.iter().any(|m| m.label == d.label));
+}
+
+fn lerp(a: f32, b: f32, t: f32) -> f32 {
+    a + (b - a) * t
+}
