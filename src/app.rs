@@ -95,6 +95,7 @@ impl LiteMonitorApp {
             self.display.gpu_percent = None;
         }
         self.display.mem_used_gb = self.metrics.mem_used_gb;
+        self.display.mem_avail_gb = self.metrics.mem_avail_gb;
         self.display.mem_total_gb = self.metrics.mem_total_gb;
         self.display.gpu_mem_used_mb = self.metrics.gpu_mem_used_mb;
         self.display.gpu_mem_total_mb = self.metrics.gpu_mem_total_mb;
@@ -106,13 +107,37 @@ impl LiteMonitorApp {
 
     fn trim_memory(&mut self) {
         match mem_trim::purge_standby_memory() {
-            Ok(()) => {
-                self.toast = "已清理待机内存，数值稍后会下降".into();
+            Ok(r) => {
+                self.metrics = self.hw.poll_now();
+                self.display.mem_used_gb = self.metrics.mem_used_gb;
+                self.display.mem_avail_gb = self.metrics.mem_avail_gb;
+                self.display.mem_total_gb = self.metrics.mem_total_gb;
+                self.display.mem_percent = self.metrics.mem_percent;
+
+                let delta = r.avail_after_gb - r.avail_before_gb;
+                if delta >= 0.15 {
+                    self.toast = format!(
+                        "可用内存 +{:.1} GB（{:.1} → {:.1} GB）",
+                        delta,
+                        r.avail_before_gb,
+                        r.avail_after_gb
+                    );
+                } else if r.any_ok {
+                    self.toast = format!(
+                        "已执行清理；可用 {:.1} GB（待机缓存不多时变化很小）",
+                        r.avail_after_gb
+                    );
+                } else if r.need_admin_hint {
+                    self.toast =
+                        "需要管理员：请右键 LiteMonitor.exe → 以管理员身份运行，再点释放".into();
+                } else {
+                    self.toast = "未能清理：请以管理员身份运行后重试".into();
+                }
             }
             Err(e) => self.toast = e,
         }
-        self.toast_until = Some(Instant::now() + Duration::from_secs(5));
-        self.last_poll = Instant::now() - Duration::from_secs(10);
+        self.toast_until = Some(Instant::now() + Duration::from_secs(6));
+        self.last_poll = Instant::now();
     }
 
     fn gpu_value_text(&self) -> (String, f32) {
@@ -234,8 +259,9 @@ impl LiteMonitorApp {
                 ui,
                 bar_w,
                 format!(
-                    "{:.1} / {:.1} GB",
+                    "已用 {:.1} · 可用 {:.1} / {:.1} GB",
                     self.display.mem_used_gb,
+                    self.display.mem_avail_gb,
                     self.display.mem_total_gb
                 ),
                 self.display.mem_percent,

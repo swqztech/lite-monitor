@@ -16,6 +16,7 @@ pub struct DiskInfo {
 pub struct Metrics {
     pub cpu_percent: f32,
     pub mem_used_gb: f32,
+    pub mem_avail_gb: f32,
     pub mem_total_gb: f32,
     pub mem_percent: f32,
     pub gpu_percent: Option<f32>,
@@ -58,6 +59,16 @@ impl HardwareMonitor {
         }
     }
 
+    /// 立即刷新内存等（释放后调用）
+    pub fn poll_now(&mut self) -> Metrics {
+        self.last_poll_skip_cpu_warm();
+        self.poll()
+    }
+
+    fn last_poll_skip_cpu_warm(&mut self) {
+        self.cpu_warm = true;
+    }
+
     pub fn poll(&mut self) -> Metrics {
         if !self.cpu_warm {
             std::thread::sleep(Duration::from_millis(120));
@@ -72,8 +83,11 @@ impl HardwareMonitor {
 
         let mem_total = self.sys.total_memory();
         let mem_used = self.sys.used_memory();
-        let mem_total_gb = mem_total as f32 / (1024.0 * 1024.0 * 1024.0);
-        let mem_used_gb = mem_used as f32 / (1024.0 * 1024.0 * 1024.0);
+        let mem_avail = self.sys.available_memory();
+        let gb = 1024.0 * 1024.0 * 1024.0;
+        let mem_total_gb = mem_total as f32 / gb;
+        let mem_used_gb = mem_used as f32 / gb;
+        let mem_avail_gb = mem_avail as f32 / gb;
         let mem_percent = if mem_total > 0 {
             (mem_used as f32 / mem_total as f32) * 100.0
         } else {
@@ -87,6 +101,7 @@ impl HardwareMonitor {
         Metrics {
             cpu_percent,
             mem_used_gb,
+            mem_avail_gb,
             mem_total_gb,
             mem_percent,
             gpu_percent,
