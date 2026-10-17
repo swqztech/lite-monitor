@@ -7,9 +7,10 @@ mod settings;
 
 fn main() -> eframe::Result<()> {
     let settings = settings::Settings::load();
+    let size = settings.window_size();
     let mut viewport = egui::ViewportBuilder::default()
-        .with_inner_size([settings.panel_width, 56.0])
-        .with_min_inner_size([480.0, 48.0])
+        .with_inner_size([size[0], size[1]])
+        .with_min_inner_size([260.0, 120.0])
         .with_transparent(true)
         .with_decorations(true)
         .with_title("LiteMonitor")
