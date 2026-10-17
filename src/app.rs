@@ -217,7 +217,13 @@ impl eframe::App for LiteMonitorApp {
             )
             .show(ctx, |ui| {
                 ui.set_width(panel_w);
-                header_bar(ui, &mut self.show_settings, &mut self.active_tab, self.settings.show_apps_tab);
+                header_bar(
+                    ui,
+                    ctx,
+                    &mut self.show_settings,
+                    &mut self.active_tab,
+                    self.settings.show_apps_tab,
+                );
                 if !self.toast.is_empty() {
                     ui.add_space(4.0);
                     ui.label(
@@ -240,14 +246,6 @@ impl eframe::App for LiteMonitorApp {
                         ui.spacing_mut().item_spacing.x = 14.0;
                         self.draw_metrics_horizontal(ui);
                     });
-                }
-
-                let drag_rect = ui.max_rect();
-                if ui
-                    .interact(drag_rect, ui.id().with("drag"), egui::Sense::click_and_drag())
-                    .dragged()
-                {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
                 }
             });
 
@@ -394,17 +392,24 @@ impl LiteMonitorApp {
 
 fn header_bar(
     ui: &mut egui::Ui,
+    ctx: &egui::Context,
     show_settings: &mut bool,
     active_tab: &mut MainTab,
     show_apps_tab: bool,
 ) {
     ui.horizontal(|ui| {
-        ui.label(
-            egui::RichText::new("LiteMonitor")
-                .strong()
-                .color(TEXT_PRIMARY)
-                .size(18.0),
+        let title = ui.add(
+            egui::Label::new(
+                egui::RichText::new("LiteMonitor")
+                    .strong()
+                    .color(TEXT_PRIMARY)
+                    .size(18.0),
+            )
+            .sense(egui::Sense::click_and_drag()),
         );
+        if title.dragged() {
+            ctx.send_viewport_cmd(egui::ViewportCommand::StartDrag);
+        }
         if show_apps_tab {
             ui.add_space(8.0);
             tab_chip(ui, "概览", *active_tab == MainTab::Overview, || *active_tab = MainTab::Overview);
