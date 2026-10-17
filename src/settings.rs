@@ -48,7 +48,7 @@ impl Default for Settings {
             refresh_ms: 1000,
             always_on_top: true,
             opacity: 0.95,
-            panel_width: 340.0,
+            panel_width: 400.0,
             vertical_layout: true,
             ui_scale: 1.35,
             show_cpu: true,
@@ -96,9 +96,19 @@ impl Settings {
         56.0 + rows as f32 * 66.0 + 20.0
     }
 
+    pub fn content_width(&self, apps_tab: bool) -> f32 {
+        if apps_tab {
+            self.panel_width.max(540.0)
+        } else if self.vertical_layout {
+            self.panel_width.max(320.0)
+        } else {
+            self.panel_width.max(520.0)
+        }
+    }
+
     pub fn window_size(&self, disk_count: usize, apps_tab: bool) -> [f32; 2] {
         if self.vertical_layout {
-            [self.panel_width.max(280.0), self.panel_height(disk_count, apps_tab)]
+            [self.content_width(apps_tab), self.panel_height(disk_count, apps_tab)]
         } else {
             [self.panel_width.max(520.0), 72.0]
         }

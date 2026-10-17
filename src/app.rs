@@ -1,13 +1,12 @@
 use crate::mem_trim;
 use crate::monitor::{format_bytes_per_sec, lerp_disks, AppUsage, HardwareMonitor, Metrics};
 use crate::settings::Settings;
+use crate::theme::{
+    self, ACCENT, APP_COL_CPU, APP_COL_MEM, BAR_TRACK, BG_ROW_ALT, BORDER, BTN_IDLE, TEXT_ACCENT,
+    TEXT_MUTED, TEXT_PRIMARY, TOAST_OK,
+};
 use eframe::egui;
 use std::time::{Duration, Instant};
-
-const TEXT_PRIMARY: egui::Color32 = egui::Color32::from_rgb(245, 247, 250);
-const TEXT_MUTED: egui::Color32 = egui::Color32::from_rgb(168, 174, 182);
-const BG_PANEL: egui::Color32 = egui::Color32::from_rgb(28, 30, 34);
-const ACCENT: egui::Color32 = egui::Color32::from_rgb(66, 133, 244);
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum MainTab {
@@ -77,6 +76,7 @@ impl LiteMonitorApp {
     }
 
     fn apply_style(&self, ctx: &egui::Context) {
+        theme::apply_visuals(ctx);
         ctx.set_pixels_per_point(self.settings.ui_scale.clamp(1.0, 2.0));
         let mut style = (*ctx.style()).clone();
         style.text_styles.insert(
@@ -173,10 +173,6 @@ impl LiteMonitorApp {
     }
 }
 
-fn alpha_from_settings(settings: &Settings) -> u8 {
-    (settings.opacity.clamp(0.35, 1.0) * 255.0) as u8
-}
-
 impl eframe::App for LiteMonitorApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.apply_style(ctx);
@@ -196,22 +192,13 @@ impl eframe::App for LiteMonitorApp {
             }
         }
 
-        let panel_w = if self.settings.vertical_layout {
-            self.settings.panel_width.max(280.0)
-        } else {
-            self.settings.panel_width.max(520.0)
-        };
-        let bg = egui::Color32::from_rgba_unmultiplied(
-            BG_PANEL.r(),
-            BG_PANEL.g(),
-            BG_PANEL.b(),
-            alpha_from_settings(&self.settings),
-        );
+        let panel_w = self.settings.content_width(self.apps_tab_active());
 
         egui::CentralPanel::default()
             .frame(
                 egui::Frame::none()
-                    .fill(bg)
+                    .fill(theme::panel_fill_alpha(self.settings.opacity))
+                    .stroke(egui::Stroke::new(1.0_f32, BORDER))
                     .rounding(12.0)
                     .inner_margin(egui::Margin::symmetric(16.0, 14.0)),
             )
@@ -229,7 +216,7 @@ impl eframe::App for LiteMonitorApp {
                     ui.label(
                         egui::RichText::new(&self.toast)
                             .size(13.0)
-                            .color(egui::Color32::from_rgb(129, 199, 132)),
+                            .color(TOAST_OK),
                     );
                 }
                 ui.add_space(8.0);
@@ -325,16 +312,9 @@ impl LiteMonitorApp {
                 .color(TEXT_MUTED)
                 .size(14.0),
         );
+        ui.add_space(8.0);
+        apps_table_header(ui, bar_w);
         ui.add_space(6.0);
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("名称").color(TEXT_MUTED).size(13.0));
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                ui.label(egui::RichText::new("内存").color(TEXT_MUTED).size(13.0));
-                ui.add_space(52.0);
-                ui.label(egui::RichText::new("CPU").color(TEXT_MUTED).size(13.0));
-            });
-        });
-        ui.add_space(4.0);
         egui::ScrollArea::vertical()
             .auto_shrink([false, false])
             .show(ui, |ui| {
@@ -343,9 +323,9 @@ impl LiteMonitorApp {
                     ui.label(egui::RichText::new("正在采集…").color(TEXT_MUTED));
                     return;
                 }
-                for app in &self.display.apps {
-                    app_row(ui, bar_w, app);
-                    ui.add_space(4.0);
+                for (i, app) in self.display.apps.iter().enumerate() {
+                    app_row(ui, bar_w, app, i % 2 == 0);
+                    ui.add_space(2.0);
                 }
             });
     }
@@ -402,7 +382,7 @@ fn header_bar(
             egui::Label::new(
                 egui::RichText::new("LiteMonitor")
                     .strong()
-                    .color(TEXT_PRIMARY)
+                    .color(TEXT_ACCENT)
                     .size(18.0),
             )
             .sense(egui::Sense::click_and_drag()),
@@ -419,7 +399,7 @@ fn header_bar(
             if ui
                 .add(
                     egui::Button::new(egui::RichText::new("设置").size(14.0))
-                        .fill(egui::Color32::from_rgb(50, 54, 60))
+                        .fill(BTN_IDLE)
                         .rounding(8.0)
                         .min_size(egui::vec2(56.0, 28.0)),
                 )
@@ -451,10 +431,11 @@ fn settings_window(ctx: &egui::Context, app: &mut LiteMonitorApp) {
             }
             ui.label("面板宽度");
             let range = if app.settings.vertical_layout {
-                280.0..=520.0
+                360.0..=720.0
             } else {
                 520.0..=1400.0
             };
+            ui.label("应用页宽度至少 540px；调宽面板可同时加宽应用列表。");
             if ui.add(egui::Slider::new(&mut app.settings.panel_width, range)).changed() {
                 app.settings_dirty = true;
             }
@@ -516,16 +497,6 @@ fn lerp(a: f32, b: f32, t: f32) -> f32 {
 
 fn lerp_f64(a: f64, b: f64, t: f32) -> f64 {
     a + (b - a) * t as f64
-}
-
-fn bar_color(percent: f32) -> egui::Color32 {
-    if percent >= 90.0 {
-        egui::Color32::from_rgb(239, 83, 80)
-    } else if percent >= 70.0 {
-        egui::Color32::from_rgb(255, 193, 7)
-    } else {
-        egui::Color32::from_rgb(0, 200, 83)
-    }
 }
 
 fn metric_row(ui: &mut egui::Ui, bar_w: f32, title: &str, value: String, percent: Option<f32>) {
@@ -590,31 +561,63 @@ fn net_row(ui: &mut egui::Ui, bar_w: f32, down: String, up: String) {
 
 fn draw_bar(ui: &mut egui::Ui, rect: egui::Rect, percent: f32) {
     let painter = ui.painter();
-    painter.rect_filled(rect, 5.0, egui::Color32::from_rgb(55, 58, 64));
+    painter.rect_filled(rect, 5.0, BAR_TRACK);
     let fill_w = rect.width() * (percent.clamp(0.0, 100.0) / 100.0);
     if fill_w > 0.5 {
         let fill = egui::Rect::from_min_size(rect.min, egui::vec2(fill_w, rect.height()));
-        painter.rect_filled(fill, 5.0, bar_color(percent));
+        painter.rect_filled(fill, 5.0, theme::bar_color(percent));
     }
 }
 
 fn tab_chip(ui: &mut egui::Ui, label: &str, selected: bool, on_click: impl FnOnce()) {
-    let fill = if selected {
-        ACCENT
+    let fill = if selected { ACCENT } else { BTN_IDLE };
+    let stroke = if selected {
+        egui::Stroke::new(1.0_f32, TEXT_ACCENT.gamma_multiply(0.6))
     } else {
-        egui::Color32::from_rgb(50, 54, 60)
+        egui::Stroke::NONE
     };
     if ui
         .add(
-            egui::Button::new(egui::RichText::new(label).size(13.0).color(TEXT_PRIMARY))
-                .fill(fill)
-                .rounding(6.0)
-                .min_size(egui::vec2(44.0, 26.0)),
+            egui::Button::new(
+                egui::RichText::new(label)
+                    .size(13.0)
+                    .color(if selected { TEXT_PRIMARY } else { TEXT_MUTED }),
+            )
+            .fill(fill)
+            .stroke(stroke)
+            .rounding(8.0)
+            .min_size(egui::vec2(48.0, 28.0)),
         )
         .clicked()
     {
         on_click();
     }
+}
+
+fn apps_table_header(ui: &mut egui::Ui, total_w: f32) {
+    let name_w = total_w - APP_COL_CPU - APP_COL_MEM - 8.0;
+    ui.horizontal(|ui| {
+        ui.add_sized(
+            [name_w, 22.0],
+            egui::Label::new(egui::RichText::new("名称").color(TEXT_MUTED).size(13.0)),
+        );
+        ui.add_sized(
+            [APP_COL_CPU, 22.0],
+            egui::Label::new(
+                egui::RichText::new("CPU")
+                    .color(TEXT_MUTED)
+                    .size(13.0),
+            ),
+        );
+        ui.add_sized(
+            [APP_COL_MEM, 22.0],
+            egui::Label::new(
+                egui::RichText::new("内存")
+                    .color(TEXT_MUTED)
+                    .size(13.0),
+            ),
+        );
+    });
 }
 
 fn format_mem_mb(mb: f32) -> String {
@@ -627,38 +630,66 @@ fn format_mem_mb(mb: f32) -> String {
     }
 }
 
-fn app_row(ui: &mut egui::Ui, bar_w: f32, app: &AppUsage) {
+fn app_row(ui: &mut egui::Ui, total_w: f32, app: &AppUsage, alt: bool) {
     let name = if app.instances > 1 {
         format!("{} ×{}", app.name, app.instances)
     } else {
         app.name.clone()
     };
-    let name_show = if name.len() > 28 {
-        format!("{}…", name.chars().take(26).collect::<String>())
-    } else {
-        name
-    };
-    ui.horizontal(|ui| {
-        ui.set_width(bar_w);
-        ui.label(egui::RichText::new(name_show).color(TEXT_PRIMARY).size(14.0));
-        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-            ui.label(
-                egui::RichText::new(format_mem_mb(app.mem_mb))
-                    .color(TEXT_PRIMARY)
-                    .size(14.0),
-            );
-            ui.add_space(12.0);
-            ui.label(
-                egui::RichText::new(format!("{:.1}%", app.cpu_percent))
-                    .color(if app.cpu_percent >= 50.0 {
-                        egui::Color32::from_rgb(255, 183, 77)
-                    } else {
-                        TEXT_PRIMARY
-                    })
-                    .size(14.0),
-            );
+    let name_w = total_w - APP_COL_CPU - APP_COL_MEM - 8.0;
+    let row_h = 28.0;
+    let bg = if alt { BG_ROW_ALT } else { egui::Color32::TRANSPARENT };
+
+    egui::Frame::none()
+        .fill(bg)
+        .rounding(6.0)
+        .inner_margin(egui::Margin::symmetric(6.0, 4.0))
+        .show(ui, |ui| {
+            ui.set_width(total_w);
+            ui.horizontal(|ui| {
+                ui.allocate_ui_with_layout(
+                    egui::vec2(name_w, row_h),
+                    egui::Layout::left_to_right(egui::Align::Center),
+                    |ui| {
+                        ui.add(
+                            egui::Label::new(
+                                egui::RichText::new(name)
+                                    .color(TEXT_PRIMARY)
+                                    .size(14.0),
+                            )
+                            .truncate(),
+                        );
+                    },
+                );
+                ui.allocate_ui_with_layout(
+                    egui::vec2(APP_COL_CPU, row_h),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        ui.label(
+                            egui::RichText::new(format!("{:.1}%", app.cpu_percent))
+                                .color(if app.cpu_percent >= 30.0 {
+                                    theme::BAR_WARN
+                                } else {
+                                    TEXT_MUTED
+                                })
+                                .size(14.0),
+                        );
+                    },
+                );
+                ui.allocate_ui_with_layout(
+                    egui::vec2(APP_COL_MEM, row_h),
+                    egui::Layout::right_to_left(egui::Align::Center),
+                    |ui| {
+                        ui.label(
+                            egui::RichText::new(format_mem_mb(app.mem_mb))
+                                .color(TEXT_ACCENT)
+                                .size(14.0)
+                                .strong(),
+                        );
+                    },
+                );
+            });
         });
-    });
 }
 
 fn metric_block_compact(ui: &mut egui::Ui, title: &str, value: String, percent: f32) {

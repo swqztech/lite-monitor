@@ -5,6 +5,7 @@ mod fonts;
 mod mem_trim;
 mod monitor;
 mod settings;
+mod theme;
 
 fn main() -> eframe::Result<()> {
     let settings = settings::Settings::load();
