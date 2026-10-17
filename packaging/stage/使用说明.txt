@@ -1,0 +1,8 @@
+LiteMonitor（Rust 自用版）— 绿色版
+
+双击 LiteMonitor.exe 或 启动.bat 运行。
+设置保存在 %APPDATA%\lite-monitor\settings.json
+
+GPU 需 NVIDIA 显卡与驱动（NVML）；AMD/Intel 显卡暂显示为 —。
+
+参考开源项目：https://github.com/Diorser/LiteMonitor
