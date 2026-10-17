@@ -1,5 +1,5 @@
 use crate::mem_trim;
-use crate::monitor::{format_bytes_per_sec, lerp_disks, HardwareMonitor, Metrics};
+use crate::monitor::{format_bytes_per_sec, lerp_disks, AppUsage, HardwareMonitor, Metrics};
 use crate::settings::Settings;
 use eframe::egui;
 use std::time::{Duration, Instant};
@@ -8,6 +8,12 @@ const TEXT_PRIMARY: egui::Color32 = egui::Color32::from_rgb(245, 247, 250);
 const TEXT_MUTED: egui::Color32 = egui::Color32::from_rgb(168, 174, 182);
 const BG_PANEL: egui::Color32 = egui::Color32::from_rgb(28, 30, 34);
 const ACCENT: egui::Color32 = egui::Color32::from_rgb(66, 133, 244);
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum MainTab {
+    Overview,
+    Apps,
+}
 
 pub struct LiteMonitorApp {
     settings: Settings,
@@ -20,12 +26,13 @@ pub struct LiteMonitorApp {
     last_window_size: [f32; 2],
     toast: String,
     toast_until: Option<Instant>,
+    active_tab: MainTab,
 }
 
 impl LiteMonitorApp {
     pub fn new() -> Self {
         let settings = Settings::load();
-        let last_window_size = settings.window_size(2);
+        let last_window_size = settings.window_size(2, false);
         Self {
             settings,
             hw: HardwareMonitor::new(),
@@ -37,7 +44,17 @@ impl LiteMonitorApp {
             last_window_size,
             toast: String::new(),
             toast_until: None,
+            active_tab: MainTab::Overview,
         }
+    }
+
+    fn apps_tab_active(&self) -> bool {
+        self.settings.show_apps_tab && self.active_tab == MainTab::Apps
+    }
+
+    fn window_size_now(&self) -> [f32; 2] {
+        self.settings
+            .window_size(self.display.disks.len().max(2), self.apps_tab_active())
     }
 
     fn apply_viewport(&self, ctx: &egui::Context) {
@@ -52,12 +69,7 @@ impl LiteMonitorApp {
     }
 
     fn sync_window_size(&mut self, ctx: &egui::Context) {
-        let disks = if self.settings.show_disk {
-            self.display.disks.len().max(2)
-        } else {
-            0
-        };
-        let size = self.settings.window_size(disks);
+        let size = self.window_size_now();
         if size != self.last_window_size {
             ctx.send_viewport_cmd(egui::ViewportCommand::InnerSize(egui::vec2(size[0], size[1])));
             self.last_window_size = size;
@@ -85,7 +97,8 @@ impl LiteMonitorApp {
             return;
         }
         self.last_poll = Instant::now();
-        self.metrics = self.hw.poll();
+        let top_n = self.settings.app_top_n.clamp(5, 25) as usize;
+        self.metrics = self.hw.poll(top_n);
         let t = 0.35;
         self.display.cpu_percent = lerp(self.display.cpu_percent, self.metrics.cpu_percent, t);
         self.display.mem_percent = lerp(self.display.mem_percent, self.metrics.mem_percent, t);
@@ -103,12 +116,14 @@ impl LiteMonitorApp {
         lerp_disks(&mut self.display.disks, &self.metrics.disks, t);
         self.display.net_down_bps = lerp_f64(self.display.net_down_bps, self.metrics.net_down_bps, t);
         self.display.net_up_bps = lerp_f64(self.display.net_up_bps, self.metrics.net_up_bps, t);
+        self.display.apps = self.metrics.apps.clone();
     }
 
     fn trim_memory(&mut self) {
         match mem_trim::purge_standby_memory() {
             Ok(r) => {
-                self.metrics = self.hw.poll_now();
+                let top_n = self.settings.app_top_n.clamp(5, 25) as usize;
+                self.metrics = self.hw.poll_now(top_n);
                 self.display.mem_used_gb = self.metrics.mem_used_gb;
                 self.display.mem_avail_gb = self.metrics.mem_avail_gb;
                 self.display.mem_total_gb = self.metrics.mem_total_gb;
@@ -170,7 +185,7 @@ impl eframe::App for LiteMonitorApp {
         self.sync_window_size(ctx);
         if self.settings_dirty {
             self.settings.save();
-            self.last_window_size = self.settings.window_size(self.display.disks.len().max(2));
+            self.last_window_size = self.window_size_now();
             self.settings_dirty = false;
         }
 
@@ -202,7 +217,7 @@ impl eframe::App for LiteMonitorApp {
             )
             .show(ctx, |ui| {
                 ui.set_width(panel_w);
-                header_bar(ui, &mut self.show_settings);
+                header_bar(ui, &mut self.show_settings, &mut self.active_tab, self.settings.show_apps_tab);
                 if !self.toast.is_empty() {
                     ui.add_space(4.0);
                     ui.label(
@@ -213,7 +228,9 @@ impl eframe::App for LiteMonitorApp {
                 }
                 ui.add_space(8.0);
 
-                if self.settings.vertical_layout {
+                if self.apps_tab_active() {
+                    self.draw_apps_tab(ui, panel_w);
+                } else if self.settings.vertical_layout {
                     ui.vertical(|ui| {
                         ui.spacing_mut().item_spacing.y = 12.0;
                         self.draw_metrics_vertical(ui, panel_w);
@@ -304,6 +321,37 @@ impl LiteMonitorApp {
         }
     }
 
+    fn draw_apps_tab(&self, ui: &mut egui::Ui, bar_w: f32) {
+        ui.label(
+            egui::RichText::new("应用程序（按内存占用排序）")
+                .color(TEXT_MUTED)
+                .size(14.0),
+        );
+        ui.add_space(6.0);
+        ui.horizontal(|ui| {
+            ui.label(egui::RichText::new("名称").color(TEXT_MUTED).size(13.0));
+            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                ui.label(egui::RichText::new("内存").color(TEXT_MUTED).size(13.0));
+                ui.add_space(52.0);
+                ui.label(egui::RichText::new("CPU").color(TEXT_MUTED).size(13.0));
+            });
+        });
+        ui.add_space(4.0);
+        egui::ScrollArea::vertical()
+            .auto_shrink([false, false])
+            .show(ui, |ui| {
+                ui.set_width(bar_w);
+                if self.display.apps.is_empty() {
+                    ui.label(egui::RichText::new("正在采集…").color(TEXT_MUTED));
+                    return;
+                }
+                for app in &self.display.apps {
+                    app_row(ui, bar_w, app);
+                    ui.add_space(4.0);
+                }
+            });
+    }
+
     fn draw_metrics_horizontal(&self, ui: &mut egui::Ui) {
         if self.settings.show_cpu {
             metric_block_compact(ui, "CPU", format!("{:.0}%", self.display.cpu_percent), self.display.cpu_percent);
@@ -344,7 +392,12 @@ impl LiteMonitorApp {
     }
 }
 
-fn header_bar(ui: &mut egui::Ui, show_settings: &mut bool) {
+fn header_bar(
+    ui: &mut egui::Ui,
+    show_settings: &mut bool,
+    active_tab: &mut MainTab,
+    show_apps_tab: bool,
+) {
     ui.horizontal(|ui| {
         ui.label(
             egui::RichText::new("LiteMonitor")
@@ -352,6 +405,11 @@ fn header_bar(ui: &mut egui::Ui, show_settings: &mut bool) {
                 .color(TEXT_PRIMARY)
                 .size(18.0),
         );
+        if show_apps_tab {
+            ui.add_space(8.0);
+            tab_chip(ui, "概览", *active_tab == MainTab::Overview, || *active_tab = MainTab::Overview);
+            tab_chip(ui, "应用", *active_tab == MainTab::Apps, || *active_tab = MainTab::Apps);
+        }
         ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
             if ui
                 .add(
@@ -428,6 +486,16 @@ fn settings_window(ctx: &egui::Context, app: &mut LiteMonitorApp) {
                 app.settings_dirty = true;
             }
             if ui.checkbox(&mut app.settings.show_net, "显示网络").changed() {
+                app.settings_dirty = true;
+            }
+            if ui.checkbox(&mut app.settings.show_apps_tab, "显示「应用」标签").changed() {
+                app.settings_dirty = true;
+            }
+            ui.label("应用列表条数");
+            if ui
+                .add(egui::Slider::new(&mut app.settings.app_top_n, 5..=25).step_by(1.0))
+                .changed()
+            {
                 app.settings_dirty = true;
             }
             if ui.button("保存并关闭").clicked() {
@@ -523,6 +591,69 @@ fn draw_bar(ui: &mut egui::Ui, rect: egui::Rect, percent: f32) {
         let fill = egui::Rect::from_min_size(rect.min, egui::vec2(fill_w, rect.height()));
         painter.rect_filled(fill, 5.0, bar_color(percent));
     }
+}
+
+fn tab_chip(ui: &mut egui::Ui, label: &str, selected: bool, on_click: impl FnOnce()) {
+    let fill = if selected {
+        ACCENT
+    } else {
+        egui::Color32::from_rgb(50, 54, 60)
+    };
+    if ui
+        .add(
+            egui::Button::new(egui::RichText::new(label).size(13.0).color(TEXT_PRIMARY))
+                .fill(fill)
+                .rounding(6.0)
+                .min_size(egui::vec2(44.0, 26.0)),
+        )
+        .clicked()
+    {
+        on_click();
+    }
+}
+
+fn format_mem_mb(mb: f32) -> String {
+    if mb >= 1024.0 {
+        format!("{:.1} GB", mb / 1024.0)
+    } else if mb >= 1.0 {
+        format!("{:.0} MB", mb)
+    } else {
+        format!("{:.1} MB", mb)
+    }
+}
+
+fn app_row(ui: &mut egui::Ui, bar_w: f32, app: &AppUsage) {
+    let name = if app.instances > 1 {
+        format!("{} ×{}", app.name, app.instances)
+    } else {
+        app.name.clone()
+    };
+    let name_show = if name.len() > 28 {
+        format!("{}…", name.chars().take(26).collect::<String>())
+    } else {
+        name
+    };
+    ui.horizontal(|ui| {
+        ui.set_width(bar_w);
+        ui.label(egui::RichText::new(name_show).color(TEXT_PRIMARY).size(14.0));
+        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+            ui.label(
+                egui::RichText::new(format_mem_mb(app.mem_mb))
+                    .color(TEXT_PRIMARY)
+                    .size(14.0),
+            );
+            ui.add_space(12.0);
+            ui.label(
+                egui::RichText::new(format!("{:.1}%", app.cpu_percent))
+                    .color(if app.cpu_percent >= 50.0 {
+                        egui::Color32::from_rgb(255, 183, 77)
+                    } else {
+                        TEXT_PRIMARY
+                    })
+                    .size(14.0),
+            );
+        });
+    });
 }
 
 fn metric_block_compact(ui: &mut egui::Ui, title: &str, value: String, percent: f32) {

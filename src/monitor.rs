@@ -1,6 +1,15 @@
 use nvml_wrapper::Nvml;
+use std::collections::HashMap;
 use std::time::{Duration, Instant};
-use sysinfo::{Disk, Disks, Networks, System};
+use sysinfo::{Disk, Disks, Networks, ProcessesToUpdate, System};
+
+#[derive(Clone, Debug)]
+pub struct AppUsage {
+    pub name: String,
+    pub cpu_percent: f32,
+    pub mem_mb: f32,
+    pub instances: u32,
+}
 
 #[derive(Clone, Debug)]
 pub struct DiskInfo {
@@ -26,6 +35,7 @@ pub struct Metrics {
     pub disks: Vec<DiskInfo>,
     pub net_down_bps: f64,
     pub net_up_bps: f64,
+    pub apps: Vec<AppUsage>,
 }
 
 struct RateSample {
@@ -60,20 +70,21 @@ impl HardwareMonitor {
     }
 
     /// 立即刷新内存等（释放后调用）
-    pub fn poll_now(&mut self) -> Metrics {
+    pub fn poll_now(&mut self, app_top_n: usize) -> Metrics {
         self.last_poll_skip_cpu_warm();
-        self.poll()
+        self.poll(app_top_n)
     }
 
     fn last_poll_skip_cpu_warm(&mut self) {
         self.cpu_warm = true;
     }
 
-    pub fn poll(&mut self) -> Metrics {
+    pub fn poll(&mut self, app_top_n: usize) -> Metrics {
         if !self.cpu_warm {
             std::thread::sleep(Duration::from_millis(120));
             self.cpu_warm = true;
         }
+        self.sys.refresh_processes(ProcessesToUpdate::All, true);
         self.sys.refresh_cpu_usage();
         self.sys.refresh_memory();
         self.networks.refresh(true);
@@ -97,6 +108,7 @@ impl HardwareMonitor {
         let (net_down_bps, net_up_bps) = self.network_rates();
         let disks = self.list_disks();
         let (gpu_percent, gpu_mem_used_mb, gpu_mem_total_mb, gpu_temp_c) = self.gpu_stats();
+        let apps = self.top_apps_with_limit(app_top_n);
 
         Metrics {
             cpu_percent,
@@ -111,7 +123,50 @@ impl HardwareMonitor {
             disks,
             net_down_bps,
             net_up_bps,
+            apps,
         }
+    }
+
+    fn top_apps_with_limit(&self, limit: usize) -> Vec<AppUsage> {
+        let mut map: HashMap<String, (f32, u64, u32)> = HashMap::new();
+        for process in self.sys.processes().values() {
+            let name = process.name().to_string_lossy().to_string();
+            if name.is_empty() {
+                continue;
+            }
+            let mem = process.memory();
+            if mem == 0 && process.cpu_usage() <= 0.001 {
+                continue;
+            }
+            let entry = map.entry(name).or_insert((0.0, 0, 0));
+            entry.0 += process.cpu_usage();
+            entry.1 += mem;
+            entry.2 += 1;
+        }
+
+        let mut list: Vec<AppUsage> = map
+            .into_iter()
+            .map(|(name, (cpu, mem, n))| AppUsage {
+                name,
+                cpu_percent: cpu,
+                mem_mb: mem as f32 / (1024.0 * 1024.0),
+                instances: n,
+            })
+            .collect();
+
+        // 先按内存，再按 CPU
+        list.sort_by(|a, b| {
+            b.mem_mb
+                .partial_cmp(&a.mem_mb)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    b.cpu_percent
+                        .partial_cmp(&a.cpu_percent)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                })
+        });
+        list.truncate(limit);
+        list
     }
 
     fn network_rates(&mut self) -> (f64, f64) {

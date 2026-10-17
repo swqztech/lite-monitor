@@ -10,6 +10,10 @@ fn default_ui_scale() -> f32 {
     1.35
 }
 
+fn default_app_top_n() -> u32 {
+    15
+}
+
 #[derive(Clone, Serialize, Deserialize)]
 pub struct Settings {
     pub refresh_ms: u64,
@@ -27,6 +31,15 @@ pub struct Settings {
     pub show_disk: bool,
     pub show_net: bool,
     pub clamp_to_screen: bool,
+    /// 显示「应用」标签页
+    #[serde(default = "default_show_apps")]
+    pub show_apps_tab: bool,
+    #[serde(default = "default_app_top_n")]
+    pub app_top_n: u32,
+}
+
+fn default_show_apps() -> bool {
+    true
 }
 
 impl Default for Settings {
@@ -44,6 +57,8 @@ impl Default for Settings {
             show_disk: true,
             show_net: true,
             clamp_to_screen: true,
+            show_apps_tab: true,
+            app_top_n: 15,
         }
     }
 }
@@ -69,18 +84,21 @@ impl Settings {
         n.max(1)
     }
 
-    pub fn panel_height(&self, disk_count: usize) -> f32 {
-        if self.vertical_layout {
-            let rows = self.visible_row_count(disk_count);
-            56.0 + rows as f32 * 66.0 + 20.0
-        } else {
-            72.0
+    pub fn panel_height(&self, disk_count: usize, apps_tab: bool) -> f32 {
+        if !self.vertical_layout {
+            return 72.0;
         }
+        if apps_tab {
+            let n = self.app_top_n.clamp(5, 25);
+            return 56.0 + 40.0 + n as f32 * 34.0 + 24.0;
+        }
+        let rows = self.visible_row_count(disk_count);
+        56.0 + rows as f32 * 66.0 + 20.0
     }
 
-    pub fn window_size(&self, disk_count: usize) -> [f32; 2] {
+    pub fn window_size(&self, disk_count: usize, apps_tab: bool) -> [f32; 2] {
         if self.vertical_layout {
-            [self.panel_width.max(280.0), self.panel_height(disk_count)]
+            [self.panel_width.max(280.0), self.panel_height(disk_count, apps_tab)]
         } else {
             [self.panel_width.max(520.0), 72.0]
         }

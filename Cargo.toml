@@ -1,6 +1,6 @@
 [package]
 name = "lite-monitor"
-version = "0.1.3"
+version = "0.1.4"
 edition = "2021"
 description = "轻量级 Windows 硬件监控条（Rust + egui）"
 
